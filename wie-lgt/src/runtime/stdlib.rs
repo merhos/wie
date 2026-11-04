@@ -240,6 +240,18 @@ async fn strlen(core: &mut ArmCore, _: &mut (), ptr_str: u32) -> Result<u32> {
     }
 }
 
+async fn strcat(core: &mut ArmCore, _: &mut (), ptr_dst: u32, ptr_src: u32) -> Result<()> {
+    tracing::debug!("strcat({ptr_dst:#x}, {ptr_src:#x})");
+
+    let src = read_null_terminated_string_bytes(core, ptr_src)?;
+    let dst = read_null_terminated_string_bytes(core, ptr_dst)?;
+
+    let offset = dst.len();
+    write_null_terminated_string_bytes(core, ptr_dst + offset as u32, &src)?;
+
+    Ok(())
+}
+
 async fn strcmp(core: &mut ArmCore, _: &mut (), ptr_str1: u32, ptr_str2: u32) -> Result<u32> {
     tracing::debug!("strcmp({ptr_str1:#x}, {ptr_str2:#x})");
 
