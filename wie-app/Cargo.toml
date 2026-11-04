@@ -13,6 +13,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2.5.5", features = [] }
 
+[features]
+hl4-android-et-dyn = ["wie/hl4-android-et-dyn"]
+
 [dependencies]
 anyhow = { workspace = true }
 async-trait = { workspace = true }
