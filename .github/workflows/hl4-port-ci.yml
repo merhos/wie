@@ -66,3 +66,50 @@ jobs:
             exit 1
           fi
           echo "No game binary files tracked."
+
+
+  android-rust:
+    name: Android ARM64 native compile (HL4 feature)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Select Android NDK
+        shell: bash
+        run: |
+          ndk_home="$ANDROID_NDK_LATEST_HOME"
+          if [ -z "$ndk_home" ]; then
+            ndk_home=$(find "$ANDROID_HOME/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          fi
+          if [ ! -d "$ndk_home" ]; then
+            echo "::error::Android NDK not found"
+            exit 1
+          fi
+          echo "ANDROID_NDK_HOME=$ndk_home" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$ndk_home" >> "$GITHUB_ENV"
+      - name: Set up Rust ARM64
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - name: Install Tauri CLI
+        uses: taiki-e/install-action@v2
+        with:
+          tool: tauri-cli
+      - name: Initialize Android app
+        working-directory: wie-app
+        run: cargo tauri android init --ci
+      - name: Build unsigned debug APK for internal compilation check only
+        working-directory: wie-app
+        run: cargo tauri android build --apk --debug --ci --target aarch64 --features hl4-android-et-dyn
+      - name: Validate Android package was produced
+        run: |
+          result=$(find wie-app/gen/android/app/build/outputs/apk -type f -name '*.apk' -print -quit)
+          test -n "$result"
+          echo "APK compilation succeeded (does not imply Heroes Lore IV gameplay)"
+          sha256sum "$result"
