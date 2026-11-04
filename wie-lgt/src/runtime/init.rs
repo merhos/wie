@@ -52,6 +52,7 @@ pub async fn load_native(core: &mut ArmCore, system: &mut System, jvm: &Jvm, jar
             // Guest execution stays blocked while foreign Android imports remain.
             register_wipic_svc_handler(core, system, jvm)?;
             register_stdlib_svc_handler(core, system)?;
+            super::eabi::register(core)?;
             let jar_value = Allocator::alloc(core, (jar_path.len() + 1) as u32)?;
             write_null_terminated_string_bytes(core, jar_value, jar_path.as_bytes())?;
             let jar_slot = Allocator::alloc(core, size_of::<u32>() as u32)?;
