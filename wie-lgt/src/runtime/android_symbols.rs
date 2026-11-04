@@ -3,7 +3,7 @@
 //! A matching symbol name does NOT establish that the ABI is identical.
 //! The ELF loader remains non-executable until foreign ABI verification.
 
-use super::svc_ids::WIPICSvcId;
+use super::svc_ids::{StdlibSvcId, WIPICSvcId};
 
 pub(super) fn wipi_candidate(name: &str) -> Option<WIPICSvcId> {
     Some(match name {
@@ -77,9 +77,34 @@ pub(super) fn wipi_candidate(name: &str) -> Option<WIPICSvcId> {
     })
 }
 
+/// C library functions with 32-bit ARM pointer/integer calling convention.
+/// These use Wie's real C handlers; no fake return values are generated.
+pub(super) fn libc_candidate(name: &str) -> Option<StdlibSvcId> {
+    Some(match name {
+        "memcpy" | "dlib_memcpy" => StdlibSvcId::Memcpy,
+        "memset" | "dlib_memset" => StdlibSvcId::Memset,
+        "memmove" | "dlib_memmove" => StdlibSvcId::Memmove,
+        "dlib_memcmp" => StdlibSvcId::Memcmp,
+        "dlib_strcpy" => StdlibSvcId::Strcpy,
+        "dlib_strcmp" => StdlibSvcId::Strcmp,
+        "dlib_strncmp" => StdlibSvcId::Strncmp,
+        "dlib_strstr" => StdlibSvcId::Strstr,
+        "dlib_strlen" => StdlibSvcId::Strlen,
+        "dlib_strncpy" => StdlibSvcId::Strncpy,
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn libc_names_are_conservative() {
+        assert!(libc_candidate("memcpy").is_some());
+        assert!(libc_candidate("dlib_strncpy").is_some());
+        assert!(libc_candidate("__aeabi_ddiv").is_none());
+        assert!(libc_candidate("MC_phnCallPlace").is_none());
+    }
     #[test]
     fn known_wipi_imports_resolve_to_real_handler_ids() {
         assert_eq!(wipi_candidate("MC_knlSprintk").map(u32::from), Some(u32::from(WIPICSvcId::Sprintk)));
