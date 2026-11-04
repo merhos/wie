@@ -1,5 +1,7 @@
 #[cfg(feature = "hl4-android-et-dyn")]
 mod android_elf;
+#[cfg(feature = "hl4-android-et-dyn")]
+mod android_symbols;
 mod globals;
 pub mod init;
 mod java;
