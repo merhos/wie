@@ -113,3 +113,10 @@ jobs:
           test -n "$result"
           echo "APK compilation succeeded (does not imply Heroes Lore IV gameplay)"
           sha256sum "$result"
+      - name: Preserve debug APK for device testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: hl4-android-arm64-debug-apk
+          path: wie-app/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+          if-no-files-found: error
+          retention-days: 14
