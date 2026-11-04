@@ -15,6 +15,10 @@ const PT_LOAD: u32 = 1;
 const PT_DYNAMIC: u32 = 2;
 const DT_NEEDED: u32 = 1;
 const DT_PLTRELSZ: u32 = 2;
+const DT_STRTAB: u32 = 5;
+const DT_SYMTAB: u32 = 6;
+const DT_STRSZ: u32 = 10;
+const DT_SYMENT: u32 = 11;
 const DT_REL: u32 = 17;
 const DT_RELSZ: u32 = 18;
 const DT_RELENT: u32 = 19;
@@ -29,6 +33,7 @@ pub struct ElfMapping {
     pub entry: u32,
     pub needed: usize,
     pub relative: usize,
+    pub resolved: usize,
     pub unresolved: usize,
 }
 
@@ -77,7 +82,30 @@ fn offset(addr: usize, len: usize, low: usize, high: usize) -> Result<usize> {
     Ok(addr - low)
 }
 
-fn relocate(image: &mut [u8], low: usize, high: usize, dynamic: &[(u32, u32)]) -> Result<(usize, usize)> {
+fn import_name<'a>(image: &'a [u8], info: u32, low: usize, high: usize, dynamic: &[(u32,u32)]) -> Result<&'a str> {
+    let tag = |key| dynamic.iter().find_map(|(t,v)| (*t == key).then_some(*v as usize));
+    let index = (info >> 8) as usize;
+    if index == 0 || tag(DT_SYMENT) != Some(16) {
+        return Err(invalid("invalid dynamic symbol record"));
+    }
+    let sym = tag(DT_SYMTAB).ok_or_else(|| invalid("missing DT_SYMTAB"))?
+        .checked_add(index.checked_mul(16).ok_or_else(|| invalid("symbol index overflow"))?)
+        .ok_or_else(|| invalid("symbol address overflow"))?;
+    let name_idx = u32_at(image, offset(sym, 16, low, high)?)? as usize;
+    let str_size = tag(DT_STRSZ).ok_or_else(|| invalid("missing DT_STRSZ"))?;
+    if name_idx >= str_size { return Err(invalid("string index out of bounds")); }
+    let addr = tag(DT_STRTAB).ok_or_else(|| invalid("missing DT_STRTAB"))?
+        .checked_add(name_idx).ok_or_else(|| invalid("string address overflow"))?;
+    let len = str_size - name_idx;
+    let start = offset(addr, len, low, high)?;
+    let raw = &image[start..start+len];
+    let end = raw.iter().position(|b| *b == 0).ok_or_else(|| invalid("unterminated imported symbol"))?;
+    core::str::from_utf8(&raw[..end]).map_err(|_| invalid("invalid imported symbol encoding"))
+}
+
+fn relocate<F>(image: &mut [u8], low: usize, high: usize, dynamic: &[(u32, u32)], mut resolve: F) -> Result<(usize,usize,usize)>
+where F: FnMut(&str) -> Result<Option<u32>> {
+
     let tag = |key: u32| dynamic.iter().find_map(|(t, v)| (*t == key).then_some(*v as usize));
     if tag(DT_RELENT).is_some_and(|len| len != 8) {
         return Err(invalid("unsupported REL entry size"));
@@ -86,6 +114,7 @@ fn relocate(image: &mut [u8], low: usize, high: usize, dynamic: &[(u32, u32)]) -
         return Err(invalid("RELA PLT entries unsupported"));
     }
     let mut relative = 0usize;
+    let mut resolved = 0usize;
     let mut unresolved = 0usize;
     for (table, len) in [
         (tag(DT_REL), tag(DT_RELSZ).unwrap_or(0)),
@@ -112,19 +141,25 @@ fn relocate(image: &mut [u8], low: usize, high: usize, dynamic: &[(u32, u32)]) -
                     relative += 1;
                 }
                 R_ARM_GLOB_DAT | R_ARM_JUMP_SLOT if (info >> 8) != 0 => {
-                    // Do not invent addresses for Android/phone/WIPI imports.
-                    unresolved += 1;
+                    let name = import_name(image, info, low, high, dynamic)?;
+                    match resolve(name)? {
+                        Some(addr) if addr != 0 => { put32(image, at, addr)?; resolved += 1; }
+                        Some(_) => return Err(invalid("null resolved import")),
+                        None => { tracing::debug!(name, "unresolved Android ELF import"); unresolved += 1; }
+                    }
                 }
                 _ => return Err(invalid("unknown ARM relocation")),
             }
         }
     }
-    Ok((relative, unresolved))
+    Ok((relative, resolved, unresolved))
 }
 
 /// Load the segments and relative relocations; never execute this image until
 /// the dynamic linker, import ABI, and Clet event registration are implemented.
-pub fn map_android_elf(core: &mut ArmCore, data: &[u8]) -> Result<ElfMapping> {
+pub fn map_android_elf<F>(core: &mut ArmCore, data: &[u8], mut resolver: F) -> Result<ElfMapping>
+where F: FnMut(&mut ArmCore, &str) -> Result<Option<u32>> {
+
     if data.get(0..6) != Some(&b"\x7fELF\x01\x01"[..])
         || u16_at(data, 16)? != 3
         || u16_at(data, 18)? != 40
@@ -185,7 +220,7 @@ pub fn map_android_elf(core: &mut ArmCore, data: &[u8]) -> Result<ElfMapping> {
         return Err(invalid("missing dynamic table"));
     }
     let needed = dynamic.iter().filter(|(key, _)| *key == DT_NEEDED).count();
-    let (relative, unresolved) = relocate(&mut image, low, high, &dynamic)?;
+    let (relative, resolved, unresolved) = relocate(&mut image, low, high, &dynamic, |name| resolver(core, name))?;
     let entry = u32_at(data, 24)? as usize;
     if entry < low || entry >= high {
         return Err(invalid("entrypoint outside image"));
@@ -195,6 +230,7 @@ pub fn map_android_elf(core: &mut ArmCore, data: &[u8]) -> Result<ElfMapping> {
         entry: BASE + (entry - low) as u32,
         needed,
         relative,
+        resolved,
         unresolved,
     })
 }
@@ -205,17 +241,28 @@ mod tests {
 
     #[test]
     fn relative_relocations_use_load_bias() -> Result<()> {
-        let mut image = vec![0u8; 64];
+        let mut image = vec![0u8; 128];
         put32(&mut image, 4, 42)?;
         put32(&mut image, 16, 0x1004)?;
         put32(&mut image, 20, R_ARM_RELATIVE)?;
         put32(&mut image, 24, 0x1008)?;
         put32(&mut image, 28, (1 << 8) | R_ARM_JUMP_SLOT)?;
-        let (relative, unresolved) = relocate(
-            &mut image, 0x1000, 0x1040,
-            &[(DT_REL, 0x1010), (DT_RELSZ, 16), (DT_RELENT, 8)],
-        )?;
-        assert_eq!((relative, unresolved), (1, 1));
+        image[80..83].copy_from_slice(b"\0f\0");
+        put32(&mut image, 112, 1)?; // symbol 1's st_name
+        let dyns = [
+            (DT_REL, 0x1010), (DT_RELSZ, 16), (DT_RELENT, 8),
+            (DT_SYMTAB, 0x1060), (DT_SYMENT, 16),
+            (DT_STRTAB, 0x1050), (DT_STRSZ, 3),
+        ];
+        let (relative, resolved, unresolved) = relocate(&mut image, 0x1000, 0x1080, &dyns, |_| Ok(None))?;
+        assert_eq!((relative, resolved, unresolved), (1, 0, 1));
+        assert_eq!(u32_at(&image, 8)?, 0);
+        let (relative, resolved, unresolved) = relocate(&mut image, 0x1000, 0x1080, &dyns, |name| {
+            assert_eq!(name, "f");
+            Ok(Some(0x71000000))
+        })?;
+        assert_eq!((relative, resolved, unresolved), (1, 1, 0));
+        assert_eq!(u32_at(&image, 8)?, 0x71000000);
         assert_eq!(u32_at(&image, 4)?, BASE.wrapping_sub(0x1000) + 42);
         Ok(())
     }
@@ -225,7 +272,7 @@ mod tests {
         let mut image = vec![0u8; 40];
         put32(&mut image, 16, 0x1000)?;
         put32(&mut image, 20, 0x7f)?;
-        assert!(relocate(&mut image, 0x1000, 0x1028, &[(DT_REL, 0x1010), (DT_RELSZ, 8)]).is_err());
+        assert!(relocate(&mut image, 0x1000, 0x1028, &[(DT_REL, 0x1010), (DT_RELSZ, 8)], |_| Ok(None)).is_err());
         Ok(())
     }
 }
