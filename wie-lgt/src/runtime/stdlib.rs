@@ -571,6 +571,35 @@ mod tests {
     }
 
     #[test]
+    fn native_c_memory_and_string_imports_follow_arm_abi() -> Result<()> {
+        let mut core = stdlib_core()?;
+        let copy = core.make_svc_stub(SVC_CATEGORY_STDLIB, 0x414u32)?;
+        let fill = core.make_svc_stub(SVC_CATEGORY_STDLIB, 0x418u32)?;
+        let copy_string = core.make_svc_stub(SVC_CATEGORY_STDLIB, 0x405u32)?;
+        let copy_bounded = core.make_svc_stub(SVC_CATEGORY_STDLIB, 0x406u32)?;
+        let string_length = core.make_svc_stub(SVC_CATEGORY_STDLIB, 0x411u32)?;
+
+        core.write_bytes(0x1fffd, b"hi\0")?;
+        assert_eq!(core.run_function::<u32>(string_length, &[0x1fffd]).now_or_never().unwrap()?, 2);
+        assert_eq!(core.run_function::<u32>(copy_string, &[0x10000, 0x1fffd]).now_or_never().unwrap()?, 0x10000);
+        assert_eq!(core.run_function::<u32>(copy, &[0x11000, 0x10000, 3]).now_or_never().unwrap()?, 0x11000);
+        assert_eq!(core.run_function::<u32>(fill, &[0x11000, 65, 2]).now_or_never().unwrap()?, 0x11000);
+        assert_eq!(read_null_terminated_string_bytes(&core, 0x11000)?, b"AA");
+
+        core.write_bytes(0x10000, b"ZZZZZZZZ")?;
+        assert_eq!(core.run_function::<u32>(copy_bounded, &[0x10000, 0x1fffd, 8]).now_or_never().unwrap()?, 0x10000);
+        let mut out = [0u8; 8];
+        core.read_bytes(0x10000, &mut out)?;
+        assert_eq!(&out, b"hi\0\0\0\0\0\0");
+        core.write_bytes(0x1fffd, b"abc")?;
+        core.write_bytes(0x10000, b"ZZZZZZZZ")?;
+        assert_eq!(core.run_function::<u32>(copy_bounded, &[0x10000, 0x1fffd, 3]).now_or_never().unwrap()?, 0x10000);
+        core.read_bytes(0x10000, &mut out)?;
+        assert_eq!(&out, b"abcZZZZZ");
+        Ok(())
+    }
+
+    #[test]
     fn bounded_string_imports_use_guest_limits_and_arm_return_values() -> Result<()> {
         let mut core = stdlib_core()?;
         let append = core.make_svc_stub(SVC_CATEGORY_STDLIB, 0x408u32)?;
