@@ -114,6 +114,7 @@ required-features = ["cli"]
 
 [features]
 default = ["cli"]
+hl4-android-et-dyn = ["wie-lgt/hl4-android-et-dyn"]
 cli = ["dep:clap", "dep:directories", "dep:fast_image_resize", "dep:midir", "dep:rodio", "dep:sentry", "dep:softbuffer", "dep:tempfile", "dep:tracing-subscriber", "dep:winit", "dep:wie-core-arm-native"]
 
 [dependencies]
