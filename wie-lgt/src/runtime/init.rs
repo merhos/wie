@@ -42,6 +42,21 @@ async fn handle_init_svc(core: &mut ArmCore, ptr_jar_path: &mut u32, id: SvcId) 
 }
 
 pub async fn load_native(core: &mut ArmCore, system: &mut System, jvm: &Jvm, jar_path: &str, data: &[u8]) -> Result<()> {
+    #[cfg(feature = "hl4-android-et-dyn")]
+    if let Ok(elf) = ElfBytes::<AnyEndian>::minimal_parse(data) {
+        if elf.ehdr.e_machine == elf::abi::EM_ARM
+            && elf.ehdr.e_type == elf::abi::ET_DYN
+            && elf.ehdr.class == elf::file::Class::ELF32
+        {
+            let status = super::android_elf::map_android_elf(core, data)?;
+            tracing::info!(?status, "Android ELF32 image mapped without external imports");
+            return Err(WieError::Unimplemented(format!(
+                "Android ELF32 mapped at {:#x}: {} relative relocations, {} unresolved external imports, {} needed libraries.                  Execution is blocked until the Android/LGT ABI bridge is implemented.",
+                status.entry, status.relative, status.unresolved, status.needed
+            )));
+        }
+    }
+
     let entrypoint = load_executable(core, data)?;
     core.prepare_execution().await?;
     register_wipic_svc_handler(core, system, jvm)?;
