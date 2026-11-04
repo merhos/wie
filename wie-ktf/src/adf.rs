@@ -62,6 +62,13 @@ fn parse_display_size(data: &[u8]) -> Option<(u32, u32)> {
 }
 
 pub fn find_client_bin(jar: &[u8]) -> Result<(String, Vec<u8>)> {
+    // KTF game packages may label an OMA DRM Content Format blob as .jar.
+    // It is not a ZIP and cannot be loaded by the KTF class loader.
+    if jar.starts_with(b"odcf") {
+        return Err(WieError::FatalError(
+            "Unsupported OMA DRM (ODCF) application: embedded .jar is a DRM container, not a ZIP/JAR. A compatible unprotected KTF/WIPI JAR is required.".into(),
+        ));
+    }
     let files: BTreeMap<String, Vec<u8>> = extract_zip(jar)?;
 
     files
@@ -89,6 +96,13 @@ pub fn validate_client_bin(data: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{KtfAdf, parse_bss_size};
+
+    #[test]
+    fn odcf_container_reports_unsupported_drm_not_broken_zip() {
+        let err = super::find_client_bin(b"odcf\\0\\x02\\0\\0").unwrap_err().to_string();
+        assert!(err.contains("OMA DRM (ODCF)"), "{err}");
+        assert!(err.contains("not a ZIP/JAR"), "{err}");
+    }
 
     #[test]
     fn parse_adf_full() {
