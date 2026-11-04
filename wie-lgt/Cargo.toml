@@ -6,6 +6,9 @@ license.workspace = true
 description.workspace = true
 repository.workspace = true
 
+[features]
+hl4-android-et-dyn = []
+
 [dependencies]
 async-trait = { workspace = true }
 bytemuck = { workspace = true }
