@@ -1,3 +1,5 @@
+#[cfg(feature = "hl4-android-et-dyn")]
+mod android_elf;
 mod globals;
 pub mod init;
 mod java;
