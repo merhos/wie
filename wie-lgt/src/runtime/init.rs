@@ -64,7 +64,13 @@ pub async fn load_native(core: &mut ArmCore, system: &mut System, jvm: &Jvm, jar
                         core.make_svc_stub(SVC_CATEGORY_INIT, InitSvcId::SetDisplayProperty).map(Some),
                     "wipic_event_handler" =>
                         core.make_svc_stub(SVC_CATEGORY_WIPIC, WIPICSvcId::CletRegister).map(Some),
-                    _ => Ok(None),
+                    _ => {
+                        if let Some(id) = super::android_symbols::wipi_candidate(symbol) {
+                            core.make_svc_stub(SVC_CATEGORY_WIPIC, id).map(Some)
+                        } else {
+                            Ok(None)
+                        }
+                    },
                 }
             })?;
             tracing::info!(?status, "Android ELF32 relocation and bootstrap mapping");
