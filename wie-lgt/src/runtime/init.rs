@@ -67,6 +67,8 @@ pub async fn load_native(core: &mut ArmCore, system: &mut System, jvm: &Jvm, jar
                     _ => {
                         if let Some(id) = super::android_symbols::wipi_candidate(symbol) {
                             core.make_svc_stub(SVC_CATEGORY_WIPIC, id).map(Some)
+                        } else if let Some(id) = super::android_symbols::libc_candidate(symbol) {
+                            core.make_svc_stub(SVC_CATEGORY_STDLIB, id).map(Some)
                         } else {
                             Ok(None)
                         }
