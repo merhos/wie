@@ -552,18 +552,15 @@ impl ArmCore {
     }
 
     pub fn write_return_value(&mut self, result: &[u32]) -> Result<()> {
+        if result.len() > 4 {
+            return Err(WieError::FatalError("ARM return values exceed four registers".into()));
+        }
         let mut inner = self.inner.lock();
-
-        if !result.is_empty() {
-            inner.engine.reg_write(ArmRegister::R0, result[0]);
+        for (value, register) in result.iter().zip([
+            ArmRegister::R0, ArmRegister::R1, ArmRegister::R2, ArmRegister::R3,
+        ]) {
+            inner.engine.reg_write(register, *value);
         }
-        if result.len() > 1 {
-            inner.engine.reg_write(ArmRegister::R1, result[1]);
-        }
-        if result.len() > 2 {
-            todo!() // TODO
-        }
-
         Ok(())
     }
 
