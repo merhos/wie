@@ -1,0 +1,62 @@
+name: Heroes Lore IV - Android port build foundation
+
+on:
+  push:
+    branches:
+      - heroes-lore-iv-android
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hl4-android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-lgt:
+    name: Native LGT emulator compile and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+      - name: Check LGT runtime
+        run: cargo check --locked -p wie-lgt
+      - name: Test LGT runtime
+        run: cargo test --locked -p wie-lgt
+      - name: Check ARM CPU runtime
+        run: cargo check --locked -p wie-core-arm
+      - name: Check native WIPI C APIs
+        run: cargo check --locked -p wie-wipi-c
+
+  android-build-prerequisites:
+    name: Android app build prerequisite check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate app and workspace metadata
+        run: |
+          python3 - <<'PY'
+          import pathlib, tomllib
+          root = pathlib.Path('.')
+          cargo = tomllib.loads((root / 'Cargo.toml').read_text())
+          app = tomllib.loads((root / 'wie-app/Cargo.toml').read_text())
+          assert 'wie-lgt' in cargo['workspace']['members']
+          assert app['package']['name'] == 'wie-app'
+          assert (root / 'wie-app/gen/android').is_dir()
+          print('Android Tauri project and LGT crate found.')
+          PY
+      - name: Verify proprietary game files are not checked into repository
+        run: |
+          if git ls-files | grep -Ei '(^|/)(binary\.mod|binary\.jar|heroes.?lore|.*\.(apk|jad|jar))$'; then
+            echo "::error::Proprietary game files must not be committed to the public repository."
+            exit 1
+          fi
+          echo "No game binary files tracked."
