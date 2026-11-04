@@ -29,6 +29,10 @@ jobs:
         run: cargo check --locked -p wie-lgt
       - name: Test LGT runtime
         run: cargo test --locked -p wie-lgt
+      - name: Check experimental Android ELF loader
+        run: cargo check --locked -p wie-lgt --features hl4-android-et-dyn
+      - name: Test ELF loader and relocation handling
+        run: cargo test --locked -p wie-lgt --features hl4-android-et-dyn
       - name: Check ARM CPU runtime
         run: cargo check --locked -p wie-core-arm
       - name: Check native WIPI C APIs
