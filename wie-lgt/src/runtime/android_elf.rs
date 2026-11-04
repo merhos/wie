@@ -257,6 +257,9 @@ mod tests {
         let (relative, resolved, unresolved) = relocate(&mut image, 0x1000, 0x1080, &dyns, |_| Ok(None))?;
         assert_eq!((relative, resolved, unresolved), (1, 0, 1));
         assert_eq!(u32_at(&image, 8)?, 0);
+        // The second run must begin with the original addend, as when a fresh
+        // ELF image is loaded; otherwise R_ARM_RELATIVE would be rebased twice.
+        put32(&mut image, 4, 42)?;
         let (relative, resolved, unresolved) = relocate(&mut image, 0x1000, 0x1080, &dyns, |name| {
             assert_eq!(name, "f");
             Ok(Some(0x71000000))
