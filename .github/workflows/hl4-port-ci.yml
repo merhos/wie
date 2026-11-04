@@ -37,6 +37,8 @@ jobs:
         run: cargo check --locked -p wie-core-arm
       - name: Check native WIPI C APIs
         run: cargo check --locked -p wie-wipi-c
+      - name: Verify KTF ODCF archives produce an explicit unsupported-DRM error
+        run: cargo test --locked -p wie-ktf odcf_container_reports_unsupported_drm_not_broken_zip
 
   android-build-prerequisites:
     name: Android app build prerequisite check
