@@ -2,6 +2,8 @@
 mod android_elf;
 #[cfg(feature = "hl4-android-et-dyn")]
 mod android_symbols;
+#[cfg(feature = "hl4-android-et-dyn")]
+mod eabi;
 mod globals;
 pub mod init;
 mod java;
