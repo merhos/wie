@@ -48,11 +48,30 @@ pub async fn load_native(core: &mut ArmCore, system: &mut System, jvm: &Jvm, jar
             && elf.ehdr.e_type == elf::abi::ET_DYN
             && elf.ehdr.class == elf::file::Class::ELF32
         {
-            let status = super::android_elf::map_android_elf(core, data)?;
-            tracing::info!(?status, "Android ELF32 image mapped without external imports");
+            // Install actual LGT service handlers before generating import stubs.
+            // Guest execution stays blocked while foreign Android imports remain.
+            register_wipic_svc_handler(core, system, jvm)?;
+            register_stdlib_svc_handler(core, system)?;
+            let jar_value = Allocator::alloc(core, (jar_path.len() + 1) as u32)?;
+            write_null_terminated_string_bytes(core, jar_value, jar_path.as_bytes())?;
+            let jar_slot = Allocator::alloc(core, size_of::<u32>() as u32)?;
+            write_generic(core, jar_slot, jar_value)?;
+            register_init_svc_handler(core, jar_slot)?;
+            let status = super::android_elf::map_android_elf(core, data, |core, symbol| {
+                use super::svc_ids::{InitSvcId, WIPICSvcId};
+                match symbol {
+                    "dlet_set_property" =>
+                        core.make_svc_stub(SVC_CATEGORY_INIT, InitSvcId::SetDisplayProperty).map(Some),
+                    "wipic_event_handler" =>
+                        core.make_svc_stub(SVC_CATEGORY_WIPIC, WIPICSvcId::CletRegister).map(Some),
+                    _ => Ok(None),
+                }
+            })?;
+            tracing::info!(?status, "Android ELF32 relocation and bootstrap mapping");
             return Err(WieError::Unimplemented(format!(
-                "Android ELF32 mapped at {:#x}: {} relative relocations, {} unresolved external imports, {} needed libraries.                  Execution is blocked until the Android/LGT ABI bridge is implemented.",
-                status.entry, status.relative, status.unresolved, status.needed
+                "Android ELF32 mapped: entry={:#x}, {} relative relocations, {} candidate bound imports, \
+                 {} unresolved external imports, {} needed libraries. Execution blocked.",
+                status.entry, status.relative, status.resolved, status.unresolved, status.needed
             )));
         }
     }
