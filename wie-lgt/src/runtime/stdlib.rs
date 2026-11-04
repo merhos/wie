@@ -1,7 +1,7 @@
 use alloc::{format, string::String};
 use chrono::{DateTime, Datelike, FixedOffset, TimeZone, Timelike};
 use core::{
-    cmp::{Ordering, min},
+    cmp::Ordering,
     iter::from_fn,
 };
 
@@ -131,32 +131,38 @@ async fn vsprintf(core: &mut ArmCore, _: &mut (), ptr_dst: u32, ptr_format: u32,
     Ok(result.len() as u32)
 }
 
-async fn strncpy(core: &mut ArmCore, _: &mut (), ptr_dst: u32, ptr_src: u32, size: u32) -> Result<()> {
-    tracing::debug!("strncpy({ptr_dst:#x}, {ptr_src:#x}, {size:#x})");
-
-    let src = read_null_terminated_string_bytes(core, ptr_src)?;
-
-    let size_to_copy = min(size, src.len() as u32);
-    let bytes = &src[..size_to_copy as usize];
-
-    core.write_bytes(ptr_dst, bytes)?;
-
-    Ok(())
+/// C strncpy copies at most size bytes and NUL-pads a short source.
+/// Return the original destination pointer through ARM R0.
+async fn strncpy(core: &mut ArmCore, _: &mut (), ptr_dst: u32, ptr_src: u32, size: u32) -> Result<u32> {
+    let mut copied = 0u32;
+    while copied < size {
+        let byte: u8 = read_generic(core, ptr_src.wrapping_add(copied))?;
+        write_generic(core, ptr_dst.wrapping_add(copied), byte)?;
+        copied += 1;
+        if byte == 0 { break; }
+    }
+    let zeros = [0u8; COPY_CHUNK];
+    while copied < size {
+        let len = ((size - copied) as usize).min(COPY_CHUNK);
+        core.write_bytes(ptr_dst.wrapping_add(copied), &zeros[..len])?;
+        copied += len as u32;
+    }
+    Ok(ptr_dst)
 }
 
-const COPY_CHUNK: usize = 4096;
-const STR_SCAN_CHUNK: usize = 256;
 
-async fn memcpy(core: &mut ArmCore, _: &mut (), ptr_dst: u32, ptr_src: u32, len: u32) -> Result<()> {
+const COPY_CHUNK: usize = 4096;
+
+async fn memcpy(core: &mut ArmCore, _: &mut (), ptr_dst: u32, ptr_src: u32, len: u32) -> Result<u32> {
     let mut buf = [0u8; COPY_CHUNK];
-    let mut offset: u32 = 0;
+    let mut offset = 0u32;
     while offset < len {
         let chunk = ((len - offset) as usize).min(COPY_CHUNK);
         core.read_bytes(ptr_src.wrapping_add(offset), &mut buf[..chunk])?;
         core.write_bytes(ptr_dst.wrapping_add(offset), &buf[..chunk])?;
-        offset = offset.wrapping_add(chunk as u32);
+        offset += chunk as u32;
     }
-    Ok(())
+    Ok(ptr_dst)
 }
 
 async fn memmove(core: &mut ArmCore, _: &mut (), ptr_dst: u32, ptr_src: u32, len: u32) -> Result<u32> {
@@ -189,15 +195,15 @@ async fn memcmp(core: &mut ArmCore, _: &mut (), ptr_first: u32, ptr_second: u32,
     Ok(0)
 }
 
-async fn memset(core: &mut ArmCore, _: &mut (), ptr_dst: u32, value: u32, len: u32) -> Result<()> {
+async fn memset(core: &mut ArmCore, _: &mut (), ptr_dst: u32, value: u32, len: u32) -> Result<u32> {
     let buf = [value as u8; COPY_CHUNK];
-    let mut offset: u32 = 0;
+    let mut offset = 0u32;
     while offset < len {
         let chunk = ((len - offset) as usize).min(COPY_CHUNK);
         core.write_bytes(ptr_dst.wrapping_add(offset), &buf[..chunk])?;
-        offset = offset.wrapping_add(chunk as u32);
+        offset += chunk as u32;
     }
-    Ok(())
+    Ok(ptr_dst)
 }
 
 async fn memchr(core: &mut ArmCore, _: &mut (), ptr: u32, value: u32, len: u32) -> Result<u32> {
@@ -215,42 +221,23 @@ async fn memchr(core: &mut ArmCore, _: &mut (), ptr: u32, value: u32, len: u32) 
 }
 
 /// R0 already holds the original destination pointer for the ARM ABI return.
-async fn strcpy(core: &mut ArmCore, _: &mut (), ptr_dst: u32, ptr_src: u32) -> Result<()> {
-    let mut buf = [0u8; STR_SCAN_CHUNK];
-    let mut offset: u32 = 0;
+async fn strcpy(core: &mut ArmCore, _: &mut (), dst: u32, src: u32) -> Result<u32> {
+    let mut index = 0u32;
     loop {
-        core.read_bytes(ptr_src.wrapping_add(offset), &mut buf)?;
-        if let Some(pos) = buf.iter().position(|&b| b == 0) {
-            core.write_bytes(ptr_dst.wrapping_add(offset), &buf[..=pos])?;
-            return Ok(());
-        }
-        core.write_bytes(ptr_dst.wrapping_add(offset), &buf)?;
-        offset = offset.wrapping_add(STR_SCAN_CHUNK as u32);
+        let byte: u8 = read_generic(core, src.wrapping_add(index))?;
+        write_generic(core, dst.wrapping_add(index), byte)?;
+        if byte == 0 { return Ok(dst); }
+        index = index.checked_add(1).ok_or_else(|| WieError::FatalError("strcpy overflow".into()))?;
     }
 }
 
 async fn strlen(core: &mut ArmCore, _: &mut (), ptr_str: u32) -> Result<u32> {
-    let mut buf = [0u8; STR_SCAN_CHUNK];
-    let mut len: u32 = 0;
+    let mut len = 0u32;
     loop {
-        core.read_bytes(ptr_str.wrapping_add(len), &mut buf)?;
-        if let Some(pos) = buf.iter().position(|&b| b == 0) {
-            return Ok(len.wrapping_add(pos as u32));
-        }
-        len = len.wrapping_add(STR_SCAN_CHUNK as u32);
+        let byte: u8 = read_generic(core, ptr_str.wrapping_add(len))?;
+        if byte == 0 { return Ok(len); }
+        len = len.checked_add(1).ok_or_else(|| WieError::FatalError("strlen overflow".into()))?;
     }
-}
-
-async fn strcat(core: &mut ArmCore, _: &mut (), ptr_dst: u32, ptr_src: u32) -> Result<()> {
-    tracing::debug!("strcat({ptr_dst:#x}, {ptr_src:#x})");
-
-    let src = read_null_terminated_string_bytes(core, ptr_src)?;
-    let dst = read_null_terminated_string_bytes(core, ptr_dst)?;
-
-    let offset = dst.len();
-    write_null_terminated_string_bytes(core, ptr_dst + offset as u32, &src)?;
-
-    Ok(())
 }
 
 async fn strcmp(core: &mut ArmCore, _: &mut (), ptr_str1: u32, ptr_str2: u32) -> Result<u32> {
